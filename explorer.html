@@ -1,0 +1,226 @@
+<meta charset="utf8" />
+<html>
+  <style>
+  body {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    font-size: 12px;
+    font-family: sans-serif;
+  }
+  td, td pre {
+    font-size: 12px;
+    font-family: Menlo;
+  }
+  nav {
+    padding: 10px;
+    display: flex;
+  }
+  main {
+    flex-grow: 1; 
+    display: flex;
+    overflow: auto;
+  }
+  .container {
+    width: 100%;
+  }
+  aside {
+  }
+  aside [data-key] {
+    color: royalblue;
+    cursor: pointer;
+    padding: 5px 10px;
+    box-sizing: border-box;
+  }
+  td.value {
+    color: royalblue;
+    cursor: pointer;
+  }
+  #sql {
+    padding: 10px;
+    box-sizing: border-box;
+    flex-grow: 1;
+  }
+
+  </style>
+  <script src='./sql-wasm.js'></script>
+  <link href="css/tabulator.min.css" rel='stylesheet'/>
+  <script src="js/tabulator.min.js"></script>
+  <script>
+    var db;
+//    config = {
+//      locateFile: filename => `/dist/${filename}`
+//    }
+    const render = async (rows) => {
+      console.log({rows})
+      return new Tabulator(".container", {
+        columns: [{
+          title: "item",
+          field: "item",
+          formatter: "html"
+        }],
+        selectableRows: false,
+        pagination:"local",
+        paginationSize:100,
+        data: rows,
+        layout:"fitColumns",
+      });
+    }
+    const run = (q) => {
+      document.querySelector("#sql").value = q
+      const res = db.exec(q)
+      console.log("RES", res)
+
+      if (res.length > 0) {
+        //const res = db.exec("SELECT json(json_value) FROM documents WHERE json_extract(json_value, '$.author') = 'p:42'")
+        const values = res[0].values.map((val) => {
+          if (val[0]) {
+            let o = JSON.parse(val[0])
+            let keys = Object.keys(o)
+            let rows = []
+            for(let key of keys) {
+              if (typeof o[key] === 'object') {
+                rows.push(`<tr><td>${key}</td><td class='value'><pre>${JSON.stringify(o[key], null, 2)}</pre></td></tr>`) 
+              } else {
+                rows.push(`<tr data-key='${key}' data-val='${o[key]}'><td>${key}</td><td class='value'>${o[key]}</td></tr>`) 
+              }
+            }
+            let html = `<table>${rows.join("")}</table>`
+            return { item: html }
+            //return JSON.parse(val)
+          } else {
+            return null
+          }
+        }).filter((x) => { return x })
+        console.log("values", values)
+        render(values)
+      } else {
+        alert("done")
+      }
+    }
+    const query = (key, val) => {
+      let Q = `SELECT json(json_value) FROM documents WHERE json_extract(json_value, '$.${key}') IS NOT NULL LIMIT 100`
+      if (key) {
+        if (val) {
+          Q = `SELECT json(json_value) FROM documents WHERE json_extract(json_value, '$.${key}') = '${val}'`
+        } else {
+          Q = `SELECT json(json_value) FROM documents WHERE json_extract(json_value, '$.${key}') IS NOT NULL`
+        }
+      }
+      run(Q)
+    }
+    document.addEventListener("DOMContentLoaded", () => {
+      document.querySelector("#run").addEventListener("click", (e) => {
+        let q = document.querySelector("#sql").value
+        run(q)
+      })
+      document.querySelector(".container").addEventListener("click", (e) => {
+        let el
+        let key
+        let val
+        if (e.target.hasAttribute("data-key") && e.target.hasAttribute("data-val")) {
+          el = e.target
+          key = el.getAttribute("data-key")
+          val = el.getAttribute("data-val")
+        } else {
+          if (e.target.closest('[data-key]')) {
+            el = e.target.closest("[data-key]")
+            key = el.getAttribute("data-key")
+            val = el.getAttribute("data-val")
+          }
+        }
+
+        if (key && val) {
+          let q = `SELECT json(json_value) FROM documents WHERE json_extract(json_value, '$.${key}') = '${val}'`
+          run(q)
+        }
+      })
+
+      document.querySelector("aside").addEventListener("click", (e) => {
+        let el
+        let key;
+        if (e.target.hasAttribute("data-key")) {
+          el = e.target
+          key = el.getAttribute("data-key")
+        } else {
+          if (e.target.closest('[data-key]')) {
+            el = e.target.closest("[data-key]")
+            key = el.getAttribute("data-key")
+          }
+        }
+        if (key) {
+          let val = el.getAttribute("data-value")
+          query(key, val)
+        } else {
+          query(key)
+        }
+      })
+      let el = document.querySelector("#file")
+      el.onchange = () => {
+        const f = el.files[0];
+        const r = new FileReader();
+        r.onload = function() {
+          let config = {}
+          initSqlJs(config).then(function(SQL){
+            const Uints = new Uint8Array(r.result);
+            db = new SQL.Database(Uints);
+
+            const KEY = 'author'
+
+            //const res2 = db.exec(`WITH t AS (
+            //  SELECT json_extract(json_value, '$') AS json_data
+            //  FROM documents
+            //)
+            //SELECT DISTINCT json_key
+            //FROM t`)
+            const res2 = db.exec(`SELECT DISTINCT key FROM documents, json_tree(json_value)`);
+            let keys = res2[0].values.map((v) => {
+              return v[0]
+            }).filter((x) => {
+              return x && typeof x === 'string'
+            })
+            keys.sort()
+
+            console.log("#", keys)
+            document.querySelector("aside").innerHTML = keys.map((key) => {
+              return `<div data-key='${key}'>${key}</div>`
+            }).join("")
+
+
+//            // names
+//            //const res0 = db.exec(`SELECT DISTINCT json_extract(json_value, '$.name') FROM documents`)
+//            const res0 = db.exec(`SELECT DISTINCT json_extract(json_value, '$.${KEY}') FROM documents`)
+//            const names = res0[0].values.map((val) => {
+//              return val[0]
+//            }).filter((x) => { return x })
+//            names.sort((x, y) => {
+//              return x > y 
+//            })
+//            
+//            console.log({ names })
+//            document.querySelector("aside").innerHTML = names.map((name) => {
+//              return `<div data-key='${KEY}' data-value='${name}'>${name}</div>`
+//            }).join("")
+//
+//            query()
+
+
+          });
+        }
+        r.readAsArrayBuffer(f);
+      }
+    })
+  </script>
+  <body>
+    <nav>
+      <input type='file' id='file'>
+      <textarea id='sql'></textarea>
+      <button id='run'>Run</button>
+    </nav>
+    <main>
+      <aside id='sidebar'></aside>
+      <div class='container'></div>
+    </main>
+  </body>
+</html>
+

@@ -1,0 +1,245 @@
+<meta charset="utf8" />
+<html>
+  <style>
+  body {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    font-size: 12px;
+    font-family: sans-serif;
+    height: 100%;
+  }
+  td, td pre {
+    font-size: 14px;
+    font-family: sans-serif;
+    padding: 10px;
+  }
+  td.author {
+    font-weight: bold;
+    color: royalblue;
+    cursor: pointer;
+  }
+  td.timestamp {
+    white-space: nowrap;
+  }
+  nav {
+    padding: 10px;
+    display: flex;
+    align-items: center;
+    background: black;
+    color : white;
+  }
+  #refresh {
+    cursor: pointer;
+  }
+  #refresh, #name {
+    padding: 10px;
+    font-size: 18px;
+    font-weight: bold;
+    color: royalblue;
+  }
+  .flexible {
+    flex-grow: 1;
+  }
+  main {
+    flex-grow: 1; 
+    display: flex;
+    overflow: auto;
+  }
+  .container {
+    width: 100%;
+  }
+  aside {
+    height: 100%;
+    overflow: auto;
+    width: 100px;
+    text-align: center;
+  }
+  aside [data-key] {
+    color: royalblue;
+    cursor: pointer;
+    padding: 10px;
+    box-sizing: border-box;
+    font-size: 15px;
+    font-weight: bold;
+  }
+  #sql {
+    padding: 10px;
+    box-sizing: border-box;
+    flex-grow: 1;
+  }
+  aside .loading, .container .loading {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 50px;
+  }
+  .container table {
+    background: rgba(0,0,100,0.04);
+  }
+
+  </style>
+  <script src='./sql-wasm.js'></script>
+  <script src='./timeago.js'></script>
+  <script src='./locale.js'></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLJAJ9/2PkPKZ5QiAj6Ta86w+fsb2TkcmfRyVX3pBnMFcV7oQPJkl9QevSCWr3W6A==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+  <script>
+    var db;
+    TimeAgo.addDefaultLocale(locale)
+    const timeago = new TimeAgo('en-US')
+    class World {
+      init(db){
+        if (db) this.db = db
+        document.querySelector("#name").innerHTML = ""
+        document.querySelector(".container").innerHTML = ""
+        this.set_players()
+        this.set_conversations()
+      }
+      set_players() {
+        // get unique playerIds and name
+        const res = this.db.exec(`SELECT DISTINCT json_extract(json_value, '$.playerId', '$.name') FROM documents WHERE json_extract(json_value, '$.playerId') IS NOT NULL AND json_extract(json_value, '$.name') IS NOT NULL`)
+        let people = res[0].values.map((val) => {
+          let [id, name] = JSON.parse(val[0])
+          return { id, name }
+        })
+        this.players = people
+        this.player_mapping = {}
+        for(let player of this.players) {
+          this.player_mapping[player.id] = player.name
+        }
+      }
+      set_conversations(author_id) {
+        if (author_id) {
+          document.querySelector("#name").innerHTML = this.player_mapping[author_id]
+          this.aside_loading()
+          setTimeout(() => {
+            let Q = `SELECT DISTINCT json_extract(json_value, '$.conversationId', '$.author') FROM documents WHERE json_extract(json_value, '$.author') = '${author_id}' AND json_extract(json_value, '$.text') IS NOT NULL ORDER BY json_extract(json_value, '$._creationTime') DESC`
+            const res = this.db.exec(Q)
+            let conversations = res[0].values.map((val) => {
+              return JSON.parse(val)[0]
+            })
+            this.conversations = conversations
+            this.aside_done()
+            document.querySelector("aside").innerHTML = this.conversations.map((conv) => {
+              return `<div data-key='${conv}'>${conv}</div>`
+            }).join("")
+          }, 0)
+        } else {
+          this.loading()
+          document.querySelector("#name").innerHTML = ""
+          setTimeout(() => {
+            let Q = `SELECT DISTINCT json_extract(json_value, '$.conversationId') FROM documents WHERE json_extract(json_value, '$.conversationId') IS NOT NULL AND json_extract(json_value, '$.text') IS NOT NULL ORDER BY json_extract(json_value, '$._creationTime') DESC`
+            const res = this.db.exec(Q)
+            let conversations = res[0].values.map((val) => {
+              return val[0]
+            })
+            this.conversations = conversations
+            // get unique playerIds and name
+            this.done()
+            document.querySelector("aside").innerHTML = this.conversations.map((conv) => {
+              return `<div data-key='${conv}'>${conv}</div>`
+            }).join("")
+          }, 0)
+        }
+      }
+      loading() {
+        document.querySelector(".container").innerHTML = "<div class='loading'><i class='fa-solid fa-circle-notch fa-spin'></i></div>"
+      }
+      aside_loading() {
+        document.querySelector("aside").innerHTML = "<div class='loading'><i class='fa-solid fa-circle-notch fa-spin'></i></div>"
+      }
+      aside_done() {
+        document.querySelector("aside").innerHTML = ""
+      }
+      done() {
+        document.querySelector(".container").innerHTML = ""
+      }
+      conversation(id) {
+        this.loading()
+        setTimeout(() => {
+          let Q = `SELECT json(json_value) FROM documents WHERE json_extract(json_value, '$.conversationId') = '${id}' AND json_extract(json_value, '$.text') IS NOT NULL`
+          let res = this.db.exec(Q)
+          let messages = res[0].values.map((item) => {
+            if (item) {
+              let i = JSON.parse(item)
+              let author = this.player_mapping[i.author]
+              //return `<tr><td class='author'>${author}</td><td class='value'>${i.text}</td><td>${new Date(Math.floor(i._creationTime)).toLocaleString()}</td></tr>`
+              return `<tr><td class='author' data-author='${i.author}'>${author}</td><td class='value'>${i.text}</td><td class='timestamp'>${timeago.format(new Date(Math.floor(i._creationTime)), 'round')}</td></tr>`
+            } else {
+              return null
+            }
+          }).filter((x) => { return x })
+          document.querySelector(".container").innerHTML = "<table>" + messages.join("") + "</table>"
+        }, 0)
+      }
+    }
+    document.addEventListener("DOMContentLoaded", () => {
+      let el = document.querySelector("#file")
+      let world = new World()
+      el.onchange = () => {
+        const f = el.files[0];
+        const r = new FileReader();
+        r.onload = function() {
+          world.loading()
+          let config = {}
+          initSqlJs(config).then(function(SQL){
+            const Uints = new Uint8Array(r.result);
+            db = new SQL.Database(Uints);
+            world.init(db)
+          });
+        }
+        r.readAsArrayBuffer(f);
+      }
+      document.querySelector("aside").addEventListener("click", (e) => {
+        let el
+        let key;
+        if (e.target.hasAttribute("data-key")) {
+          el = e.target
+          key = el.getAttribute("data-key")
+        } else {
+          if (e.target.closest('[data-key]')) {
+            el = e.target.closest("[data-key]")
+            key = el.getAttribute("data-key")
+          }
+        }
+        if (key) {
+          world.conversation(key)
+        }
+      })
+      document.querySelector("#refresh").addEventListener("click", (e) => {
+        world.init()
+      })
+      document.querySelector(".container").addEventListener("click", (e) => {
+        let author
+        if (e.target.hasAttribute("data-author")) {
+          el = e.target
+          author = el.getAttribute("data-author")
+        } else {
+          if (e.target.closest('[data-author]')) {
+            el = e.target.closest("[data-author]")
+            author = el.getAttribute("data-author")
+          }
+        }
+
+        if (author) {
+          world.set_conversations(author)
+        }
+      })
+    })
+  </script>
+  <body>
+    <nav>
+      <h1 id='refresh'>Town Player</h1>
+      <div id='name'></div>
+      <div class='flexible'></div>
+      <input type='file' id='file'>
+    </nav>
+    <main>
+      <aside id='sidebar'></aside>
+      <div class='container'></div>
+    </main>
+  </body>
+</html>
+
