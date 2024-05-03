@@ -22,6 +22,14 @@
     font-family: sans-serif;
     height: 100%;
   }
+  header {
+    margin: 20px 0;
+    background: white;
+  }
+  header td {
+    background: white;
+    padding: 10px;
+  }
   td, td pre {
     font-size: 14px;
     font-family: sans-serif;
@@ -115,20 +123,23 @@
       }
       set_players() {
         // get unique playerIds and name
-        const res = this.db.exec(`SELECT DISTINCT json_extract(json_value, '$.playerId', '$.name') FROM documents WHERE json_extract(json_value, '$.playerId') IS NOT NULL AND json_extract(json_value, '$.name') IS NOT NULL`)
+        const res = this.db.exec(`SELECT DISTINCT json_extract(json_value, '$.playerId', '$.name', '$.description') FROM documents WHERE json_extract(json_value, '$.playerId') IS NOT NULL AND json_extract(json_value, '$.name') IS NOT NULL`)
         let people = res[0].values.map((val) => {
-          let [id, name] = JSON.parse(val[0])
-          return { id, name }
+          let [id, name, description] = JSON.parse(val[0])
+          return { id, name, description }
         })
         this.players = people
         this.player_mapping = {}
         for(let player of this.players) {
-          this.player_mapping[player.id] = player.name
+          this.player_mapping[player.id] = {
+            name: player.name,
+            description: player.description
+          }
         }
       }
       set_conversations(author_id) {
         if (author_id) {
-          document.querySelector("#name").innerHTML = this.player_mapping[author_id]
+          document.querySelector("#name").innerHTML = this.player_mapping[author_id].name
           this.aside_loading()
           setTimeout(() => {
             let Q = `SELECT DISTINCT json_extract(json_value, '$.conversationId', '$.author') FROM documents WHERE json_extract(json_value, '$.author') = '${author_id}' AND json_extract(json_value, '$.text') IS NOT NULL ORDER BY json_extract(json_value, '$._creationTime') DESC`
@@ -177,17 +188,30 @@
         setTimeout(() => {
           let Q = `SELECT json(json_value) FROM documents WHERE json_extract(json_value, '$.conversationId') = '${id}' AND json_extract(json_value, '$.text') IS NOT NULL`
           let res = this.db.exec(Q)
+          let authors = {}
           let messages = res[0].values.map((item) => {
             if (item) {
               let i = JSON.parse(item)
-              let author = this.player_mapping[i.author]
+              let author = this.player_mapping[i.author].name
+              authors[i.author] = {
+                name: this.player_mapping[i.author].name,
+                description: this.player_mapping[i.author].description
+              }
               //return `<tr><td class='author'>${author}</td><td class='value'>${i.text}</td><td>${new Date(Math.floor(i._creationTime)).toLocaleString()}</td></tr>`
               return `<tr><td class='author' data-author='${i.author}'>${author}</td><td class='value'>${i.text}</td><td class='timestamp'>${timeago.format(new Date(Math.floor(i._creationTime)), 'round')}</td></tr>`
             } else {
               return null
             }
           }).filter((x) => { return x })
-          document.querySelector(".container").innerHTML = "<table>" + messages.join("") + "</table>"
+
+          let content = []
+          console.log("authors", authors)
+          for(let key in authors) {
+            let author = authors[key]
+            content.push(`<tr><td><h2>${author.name}</h2></td><td>${author.description}</td></tr>`)
+          }
+          let header = `<table>${content.join('')}</table>`
+          document.querySelector(".container").innerHTML = "<header>" + header + "</header>" + "<table>" + messages.join("") + "</table>"
         }, 0)
       }
     }
